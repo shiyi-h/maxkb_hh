@@ -1,0 +1,17 @@
+services:
+  maxkb:
+    image: 'maxkb_hh'
+    container_name: maxkb
+    restart: unless-stopped
+    volumes:
+            - /Users/hh/Documents/data/maxkb:/var/lib/postgresql/data
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - '8080:8080'
+      - '5433:5432'
+    networks:
+      - maxkb
+networks:
+  maxkb:
+
