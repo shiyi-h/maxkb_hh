@@ -67,9 +67,12 @@ class PGVector(BaseVectorStore):
     def _save(self, text, source_type: SourceType, dataset_id: str, document_id: str, paragraph_id: str, source_id: str,
               is_active: bool,
               embedding: HuggingFaceEmbeddings):
+        return_long = 'mix'
         text = self.re_content(text)
         if hasattr(embedding, 'long_pooling'):
-            text_embedding = embedding.embed_query(text, long_pooling=True)
+            text_embedding = embedding.embed_query(text, return_long=return_long)
+            if return_long=='pooling':
+                text_embedding = [text_embedding]
         else:
             text_embedding = [embedding.embed_query(text)]
         for emb in text_embedding:
@@ -87,14 +90,15 @@ class PGVector(BaseVectorStore):
 
     def _batch_save(self, text_list: List[Dict], embedding: HuggingFaceEmbeddings):
         texts = [self.re_content(row.get('text')) for row in text_list]
+        return_long = 'mix'
         if hasattr(embedding, 'long_pooling'):
-            embeddings = embedding.embed_documents(texts, long_pooling=True)
+            embeddings = embedding.embed_documents(texts, return_long=return_long)
         else:
             embeddings = embedding.embed_documents(texts)
         embedding_list = []
         for index in range(0, len(text_list)):
             embs = embeddings[index]
-            embs = embs if hasattr(embedding, 'long_pooling') else [embs]
+            embs = embs if hasattr(embedding, 'long_pooling') and return_long=='mix' else [embs]
             for emb in embs:
                 embedding_list.append(Embedding(id=uuid.uuid1(),
                                                 document_id=text_list[index].get('document_id'),

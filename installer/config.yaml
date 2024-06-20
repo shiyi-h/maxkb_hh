@@ -16,7 +16,7 @@ DB_PASSWORD: Password123@postgres
 DB_ENGINE: django.db.backends.postgresql_psycopg2
 EMBEDDING_MODEL_PATH: /opt/maxkb/model/embedding
 EMBEDDING_MODEL_NAME: bce-embedding-base_v1
-EMBEDDING_TYPE: youdao
+EMBEDDING_TYPE: general
 EMBEDDING_URL: xinference_url
 
 DEBUG: false
