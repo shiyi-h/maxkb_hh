@@ -19,6 +19,7 @@ from common.event.listener_manage import ListenerManagement, UpdateEmbeddingDocu
 from common.exception.app_exception import AppApiException
 from common.mixins.api_mixin import ApiMixin
 from common.util.common import post
+from common.util.ts_vecto_util import to_search_vector, re_content
 from common.util.field_message import ErrMessage
 from dataset.models import Paragraph, Problem, Document, ProblemParagraphMapping
 from dataset.serializers.common_serializers import update_document_char_length, BatchSerializer
@@ -586,11 +587,17 @@ class ParagraphSerializers(ApiMixin, serializers.Serializer):
 
         @staticmethod
         def get_paragraph_problem_model(dataset_id: str, document_id: str, instance: Dict):
+            title = instance.get("title") if 'title' in instance else ''
+            content = instance.get("content")
+            title_vector = to_search_vector(title) if title else ''
+            content_vector = to_search_vector(re_content(content))
             paragraph = Paragraph(id=uuid.uuid1(),
                                   document_id=document_id,
-                                  content=instance.get("content"),
+                                  content=content,
                                   dataset_id=dataset_id,
-                                  title=instance.get("title") if 'title' in instance else '')
+                                  title=title,
+                                  title_vector=title_vector,
+                                  content_vector=content_vector)
             problem_list = instance.get('problem_list')
             exists_problem_list = []
             if 'problem_list' in instance and len(problem_list) > 0:

@@ -137,7 +137,9 @@ class DocumentInstanceSerializer(ApiMixin, serializers.Serializer):
             properties={
                 'name': openapi.Schema(type=openapi.TYPE_STRING, title="文档名称", description="文档名称"),
                 'paragraphs': openapi.Schema(type=openapi.TYPE_ARRAY, title="段落列表", description="段落列表",
-                                             items=ParagraphSerializers.Create.get_request_body_api())
+                                             items=ParagraphSerializers.Create.get_request_body_api()),
+                'raptor_model': openapi.Schema(type=openapi.TYPE_STRING, default='', 
+                                               title="raptor模型", description="raptor模型")
             }
         )
 
@@ -727,7 +729,8 @@ class DocumentSerializers(ApiMixin, serializers.Serializer):
                                          [len(p.get('content')) for p in instance.get('paragraphs', [])],
                                          0),
                    'meta': instance.get('meta') if instance.get('meta') is not None else {},
-                   'type': instance.get('type') if instance.get('type') is not None else Type.base})
+                   'type': instance.get('type') if instance.get('type') is not None else Type.base,
+                   'raptor_model': instance.get('raptor_model') if instance.get('raptor_model') is not None else ''})
 
             return DocumentSerializers.Create.get_paragraph_model(document_model,
                                                                   instance.get('paragraphs') if

@@ -15,31 +15,22 @@ import re
 
 from django.db.models import QuerySet
 from langchain_community.embeddings import HuggingFaceEmbeddings
-
+from dataset.models import Paragraph, Status
 from common.config.embedding_config import EmbeddingModel
 from common.db.search import generate_sql_by_query_dict
 from common.db.sql_execute import select_list
 from common.util.file_util import get_file_content
-from common.util.ts_vecto_util import to_ts_vector, to_query
+from common.util.ts_vecto_util import to_search_vector, to_query, re_content
+from common.util.rsa_util import rsa_long_decrypt
 from embedding.models import Embedding, SourceType, SearchMode
 from embedding.vector.base_vector import BaseVectorStore
+from embedding.llm.raptor import RecursiveAbstractiveProcessing4TreeOrganizedRetrieval as Raptor
+from setting.models import Model
+from setting.models_provider.constants.model_provider_constants import ModelProvideConstants
 from smartdoc.conf import PROJECT_DIR
 
 
 class PGVector(BaseVectorStore):
-    RE_PAT = [re.compile(r'!\[[^\]]*\]\(/api/image/[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}\)'),
-              re.compile(r'\[[^\]]*\]\(/api/longtext/[a-zA-Z0-9]{8}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{4}-[a-zA-Z0-9]{12}\)'),
-              re.compile(r"</?(table|td|caption|tr|th)( [^<>]*)?>"),
-              re.compile(r' {2,}')]
-    
-    def re_content(self, text):
-        if isinstance(text, str):
-            for pat in self.RE_PAT:
-                text = pat.sub(' ', text)
-            return text 
-        else:
-            text = [self.re_content(ti) for ti in text]
-            return text
 
     def delete_by_source_ids(self, source_ids: List[str], source_type: str):
         QuerySet(Embedding).filter(source_id__in=source_ids, source_type=source_type).delete()
@@ -68,7 +59,7 @@ class PGVector(BaseVectorStore):
               is_active: bool,
               embedding: HuggingFaceEmbeddings):
         return_long = 'mix'
-        text = self.re_content(text)
+        text = re_content(text)
         if hasattr(embedding, 'long_pooling'):
             text_embedding = embedding.embed_query(text, return_long=return_long)
             if return_long=='pooling':
@@ -83,22 +74,40 @@ class PGVector(BaseVectorStore):
                                 paragraph_id=paragraph_id,
                                 source_id=source_id,
                                 embedding=emb,
-                                source_type=source_type,
-                                search_vector=to_ts_vector(text))
+                                source_type=source_type)
             embedding.save()
         return True
 
-    def _batch_save(self, text_list: List[Dict], embedding: HuggingFaceEmbeddings):
-        texts = [self.re_content(row.get('text')) for row in text_list]
+    def _batch_save(self, text_list: List[Dict], embedding: HuggingFaceEmbeddings, raptor_model):
+        texts = [re_content(row.get('text')) for row in text_list]
         return_long = 'mix'
         if hasattr(embedding, 'long_pooling'):
             embeddings = embedding.embed_documents(texts, return_long=return_long)
         else:
             embeddings = embedding.embed_documents(texts)
+        extra = []
+        if raptor_model:
+            model = QuerySet(Model).filter(id=raptor_model).first()
+            chat_model = ModelProvideConstants[model.provider].value.get_model(model.model_type, model.model_name,
+                                                                               json.loads(
+                                                                                   rsa_long_decrypt(model.credential)))
+            raptor = Raptor(chat_model, embedding)
+            chunks = [(text_list[i].get('text'), embeddings[i]) for i in range(len(text_list))]
+            result = raptor(chunks, 10086)
+            for tid, embd in result['table']:
+                if isinstance(embeddings[tid][0], list):
+                    embeddings[tid].append(embd)
+                else:
+                    embeddings[tid] = [embd, embeddings[tid]]
+            document_id = text_list[0].get('document_id')
+            dataset_id = text_list[0].get('dataset_id')
+            for text, embd in result['text']:
+                extra.append({'id':uuid.uuid1(), 'content': text, 'embd':embd, 
+                              'document_id':document_id, 'dataset_id':dataset_id})
         embedding_list = []
         for index in range(0, len(text_list)):
             embs = embeddings[index]
-            embs = embs if hasattr(embedding, 'long_pooling') and return_long=='mix' else [embs]
+            embs = embs if isinstance(embs[0], list) else [embs]
             for emb in embs:
                 embedding_list.append(Embedding(id=uuid.uuid1(),
                                                 document_id=text_list[index].get('document_id'),
@@ -107,8 +116,23 @@ class PGVector(BaseVectorStore):
                                                 is_active=text_list[index].get('is_active', True),
                                                 source_id=text_list[index].get('source_id'),
                                                 source_type=text_list[index].get('source_type'),
-                                                embedding=emb,
-                                                search_vector=to_ts_vector(texts[index])))
+                                                embedding=emb))
+        paragraph_list = []
+        for d in extra:
+            paragraph_list.append(Paragraph(id=d['id'], document_id=d['document_id'], content=d.get("content"),
+                                  dataset_id=d['dataset_id'], title='', title_vector='',
+                                  content_vector=to_search_vector(d.get("content")), 
+                                  status=Status.raptor))
+            embedding_list.append(Embedding(id=uuid.uuid1(),
+                                            document_id=d['document_id'],
+                                            paragraph_id=d['id'],
+                                            dataset_id=d.get('dataset_id'),
+                                            is_active=True,
+                                            source_id=d['id'],
+                                            source_type=1,
+                                            embedding=d['embd']))
+        if paragraph_list:
+            QuerySet(Paragraph).bulk_create(paragraph_list)
         QuerySet(Embedding).bulk_create(embedding_list) if len(embedding_list) > 0 else None
         return True
 
@@ -118,7 +142,7 @@ class PGVector(BaseVectorStore):
                  embedding: HuggingFaceEmbeddings):
         if dataset_id_list is None or len(dataset_id_list) == 0:
             return []
-        query_text = self.re_content(query_text)
+        query_text = re_content(query_text)
         exclude_dict = {}
         embedding_query = embedding.embed_query(query_text)
         query_set = QuerySet(Embedding).filter(dataset_id__in=dataset_id_list, is_active=True)
@@ -133,7 +157,7 @@ class PGVector(BaseVectorStore):
               exclude_document_id_list: list[str],
               exclude_paragraph_list: list[str], is_active: bool, top_n: int, similarity: float,
               search_mode: SearchMode):
-        query_text = self.re_content(query_text)
+        query_text = re_content(query_text)
         exclude_dict = {}
         if dataset_id_list is None or len(dataset_id_list) == 0:
             return []
@@ -224,7 +248,7 @@ class KeywordsSearch(ISearch):
                                                            select_string=get_file_content(
                                                                os.path.join(PROJECT_DIR, "apps", "embedding", 'sql',
                                                                             'keywords_search.sql')),
-                                                           with_table_name=True)
+                                                           with_table_name=False)
         embedding_model = select_list(exec_sql,
                                       [to_query(query_text), *exec_params, similarity, top_number])
         return embedding_model
@@ -245,10 +269,10 @@ class BlendSearch(ISearch):
                                                            select_string=get_file_content(
                                                                os.path.join(PROJECT_DIR, "apps", "embedding", 'sql',
                                                                             'blend_search.sql')),
-                                                           with_table_name=True)
+                                                           with_table_name=False)
         embedding_model = select_list(exec_sql,
-                                      [json.dumps(query_embedding), to_query(query_text), *exec_params, similarity,
-                                       top_number])
+                                      [json.dumps(query_embedding), *exec_params, to_query(query_text), *exec_params, 
+                                       similarity, top_number])
         return embedding_model
 
     def support(self, search_mode: SearchMode):

@@ -134,6 +134,7 @@ function submit() {
     }
     documents.push({
       name: item.name,
+      raptor_model: item.raptor_model,
       paragraphs: item.content
     })
   })

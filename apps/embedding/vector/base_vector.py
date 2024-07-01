@@ -70,7 +70,7 @@ class BaseVectorStore(ABC):
         self.save_pre_handler()
         self._save(text, source_type, dataset_id, document_id, paragraph_id, source_id, is_active, embedding)
 
-    def batch_save(self, data_list: List[Dict], embedding=None):
+    def batch_save(self, data_list: List[Dict], embedding=None, raptor_model=None):
         # 获取锁
         lock.acquire()
         try:
@@ -83,9 +83,10 @@ class BaseVectorStore(ABC):
             if embedding is None:
                 embedding = EmbeddingModel.get_embedding_model()
             self.save_pre_handler()
-            result = sub_array(data_list)
-            for child_array in result:
-                self._batch_save(child_array, embedding)
+            # result = sub_array(data_list)
+            # for child_array in result:
+            #     self._batch_save(child_array, embedding, raptor_model)
+            self._batch_save(data_list, embedding, raptor_model)
         finally:
             # 释放锁
             lock.release()
@@ -98,7 +99,7 @@ class BaseVectorStore(ABC):
         pass
 
     @abstractmethod
-    def _batch_save(self, text_list: List[Dict], embedding: HuggingFaceEmbeddings):
+    def _batch_save(self, text_list: List[Dict], embedding: HuggingFaceEmbeddings, **kwargs):
         pass
 
     def search(self, query_text, dataset_id_list: list[str], exclude_document_id_list: list[str],

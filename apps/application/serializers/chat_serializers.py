@@ -36,6 +36,7 @@ from common.util.field_message import ErrMessage
 from common.util.file_util import get_file_content
 from common.util.lock import try_lock, un_lock
 from common.util.rsa_util import rsa_long_decrypt
+from common.util.ts_vecto_util import re_content, to_search_vector
 from dataset.models import Document, Problem, Paragraph, ProblemParagraphMapping
 from dataset.serializers.paragraph_serializers import ParagraphSerializers
 from setting.models import Model
@@ -503,11 +504,17 @@ class ChatRecordSerializer(serializers.Serializer):
 
             document_id = self.data.get("document_id")
             dataset_id = self.data.get("dataset_id")
+            title = instance.get("title") if 'title' in instance else ''
+            content = instance.get("content")
+            title_vector = to_search_vector(title) if title else ''
+            content_vector = to_search_vector(re_content(content))
             paragraph = Paragraph(id=uuid.uuid1(),
                                   document_id=document_id,
-                                  content=instance.get("content"),
+                                  content=content,
                                   dataset_id=dataset_id,
-                                  title=instance.get("title") if 'title' in instance else '')
+                                  title=title,
+                                  title_vector=title_vector,
+                                  content_vector=content_vector)
             problem_text = instance.get('problem_text') if instance.get(
                 'problem_text') is not None else chat_record.problem_text
             problem = Problem(id=uuid.uuid1(), content=problem_text, dataset_id=dataset_id)

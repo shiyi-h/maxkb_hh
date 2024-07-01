@@ -124,6 +124,8 @@ class ListenerManagement:
         :return: None
         """
         max_kb.info(f"开始--->向量化文档:{document_id}")
+        # 删除raptor
+        QuerySet(Paragraph).filter(document_id=document_id, status=Status.raptor).delete()
         QuerySet(Document).filter(id=document_id).update(**{'status': Status.embedding})
         QuerySet(Paragraph).filter(document_id=document_id).update(**{'status': Status.embedding})
         status = Status.success
@@ -135,10 +137,11 @@ class ListenerManagement:
                     'paragraph': QuerySet(Paragraph).filter(document_id=document_id)},
                 select_string=get_file_content(
                     os.path.join(PROJECT_DIR, "apps", "common", 'sql', 'list_embedding_text.sql')))
+            raptor_model = QuerySet(Document).filter(id=document_id).first().raptor_model
             # 删除文档向量数据
             VectorStore.get_embedding_vector().delete_by_document_id(document_id)
             # 批量向量化
-            VectorStore.get_embedding_vector().batch_save(data_list)
+            VectorStore.get_embedding_vector().batch_save(data_list, raptor_model=raptor_model)
         except Exception as e:
             max_kb_error.error(f'向量化文档:{document_id}出现错误{str(e)}{traceback.format_exc()}')
             status = Status.error
@@ -146,7 +149,7 @@ class ListenerManagement:
             # 修改状态
             QuerySet(Document).filter(id=document_id).update(
                 **{'status': status, 'update_time': datetime.datetime.now()})
-            QuerySet(Paragraph).filter(document_id=document_id).update(**{'status': status})
+            QuerySet(Paragraph).filter(document_id=document_id).exclude(status=Status.raptor).update(**{'status': status})
             max_kb.info(f"结束--->向量化文档:{document_id}")
 
     @staticmethod
